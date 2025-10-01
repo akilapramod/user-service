@@ -24,7 +24,9 @@ async function bootstrap() {
   } catch (err: unknown) {
     // If swagger file not found, do nothing (app continues without docs)
     const msg = (err && typeof err === 'object' && 'message' in err) ? (err as any).message : String(err);
-    console.warn('Could not load OpenAPI yaml for Swagger UI:', msg);
+    console.error('Swagger setup failed - missing or invalid OpenAPI YAML:', msg); // Enhanced log for debugging
+    console.error('Current __dirname:', __dirname); // Log path for serverless context
+    console.error('Attempted docPath:', require('path').resolve(__dirname, '..', '..', 'openapi', 'user-service.yaml')); // Log resolved path
   }
   await app.listen(process.env.PORT ? Number(process.env.PORT) : 3002);
   console.info(`User service listening on ${process.env.PORT || 3002}`);
