@@ -1,34 +1,69 @@
 import { NestFactory } from '@nestjs/core';
+import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
 import * as dotenv from 'dotenv';
 import * as express from 'express';
 import * as swaggerUi from 'swagger-ui-express';
 import * as cookieParser from 'cookie-parser';
-import * as fs from 'fs';
-import * as yaml from 'js-yaml';
+import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 
-async function bootstrap() {
+// For serverless compatibility (Vercel), export a handler function
+let cachedApp: express.Express | null = null;
+
+async function createApp(): Promise<express.Express> {
   dotenv.config({ path: '../../.env' });
   const app = await NestFactory.create(AppModule);
+  app.useGlobalPipes(new ValidationPipe({ transform: true }));
   app.setGlobalPrefix(process.env.API_PREFIX || '/api');
-  // Serve Swagger UI at /docs using the pre-built OpenAPI YAML
   const server = app.getHttpAdapter().getInstance() as express.Express;
   server.use(cookieParser());
-  try {
-    const docPath = require('path').resolve(__dirname, '..', '..', 'openapi', 'user-service.yaml');
-    const yamlContent = fs.readFileSync(docPath, 'utf8');
-    const swaggerDocument = yaml.load(yamlContent) as object;
-    server.use('/docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument));
-    // Redirect root to docs for convenience
-    server.get('/', (_req, res) => res.redirect('/docs'));
-  } catch (err: unknown) {
-    // If swagger file not found, do nothing (app continues without docs)
-    const msg = (err && typeof err === 'object' && 'message' in err) ? (err as any).message : String(err);
-    console.error('Swagger setup failed - missing or invalid OpenAPI YAML:', msg); // Enhanced log for debugging
-    console.error('Current __dirname:', __dirname); // Log path for serverless context
-    console.error('Attempted docPath:', require('path').resolve(__dirname, '..', '..', 'openapi', 'user-service.yaml')); // Log resolved path
-  }
-  await app.listen(process.env.PORT ? Number(process.env.PORT) : 3002);
-  console.info(`User service listening on ${process.env.PORT || 3002}`);
+
+  // Dynamic Swagger setup using @nestjs/swagger (no YAML file needed)
+  const config = new DocumentBuilder()
+    .setTitle('User Service API')
+    .setDescription('eChannelling User Service API')
+    .setVersion('1.0')
+    .addTag('users', 'User management endpoints')
+    .addTag('auth', 'Authentication endpoints')
+    .addBearerAuth(
+      {
+        type: 'http',
+        scheme: 'bearer',
+        bearerFormat: 'JWT',
+        name: 'JWT',
+        description: 'Enter JWT token',
+        in: 'header',
+      },
+      'JWT-auth',
+    )
+    .build();
+  const document = SwaggerModule.createDocument(app, config);
+  SwaggerModule.setup('docs', app, document);
+
+  // Redirect root to docs for convenience
+  server.get('/', (_req, res) => res.redirect('/docs'));
+  await app.init();
+  console.info('User service app initialized');
+  return server;
 }
-bootstrap();
+
+export default async function handler(req: any, res: any): Promise<void> {
+  if (!cachedApp) {
+    console.log('Cold start: Initializing app...');
+    cachedApp = await createApp();
+  }
+  return cachedApp(req, res);
+}
+
+// For local development, keep traditional bootstrap
+if (require.main === module) {
+  bootstrap().catch(err => console.error('Bootstrap failed:', err));
+}
+
+async function bootstrap() {
+  const server = await createApp();
+  const port = process.env.PORT ? Number(process.env.PORT) : 3002;
+  server.listen(port, () => {
+    console.info(`User service listening on port ${port}`);
+  });
+}
